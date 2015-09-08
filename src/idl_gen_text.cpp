@@ -310,7 +310,7 @@ std::string TextMakeRule(const Parser &parser,
   if (!parser.builder_.GetSize() || !parser.root_struct_def_) return "";
   std::string filebase = flatbuffers::StripPath(
       flatbuffers::StripExtension(file_name));
-  std::string make_rule = TextFileName(path, filebase) + ": " + file_name;
+  std::string make_rule = TextFileName(path, filebase) + ":" + file_name;
   auto included_files = parser.GetIncludedFilesRecursive(
       parser.root_struct_def_->file);
   for (auto it = included_files.begin();
