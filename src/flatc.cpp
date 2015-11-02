@@ -60,6 +60,10 @@ const Generator generators[] = {
     flatbuffers::GeneratorOptions::kJava,
     "Generate Java classes for tables/structs",
     flatbuffers::GeneralMakeRule },
+  { flatbuffers::GenerateJS,       "-s", "JavaScript",
+    flatbuffers::GeneratorOptions::kMAX,
+    "Generate JavaScript code for tables/structs",
+    flatbuffers::JSMakeRule },
   { flatbuffers::GenerateGeneral,  "-n", "C#",
     flatbuffers::GeneratorOptions::kCSharp,
     "Generate C# classes for tables/structs",
@@ -94,7 +98,7 @@ static void Error(const std::string &err, bool usage, bool show_exe_name) {
       "                  also implies --no-prefix.\n"
       "  --gen-includes  (deprecated), this is the default behavior.\n"
       "                  If the original behavior is required (no include\n"
-	  "                  statements) use --no-includes.\n"
+    "                  statements) use --no-includes.\n"
       "  --no-includes   Don\'t generate include statements for included\n"
       "                  schemas the generated file depends on (C++).\n"
       "  --gen-mutable   Generate accessors that can mutate buffers in-place.\n"
@@ -140,6 +144,8 @@ int main(int argc, const char *argv[]) {
         include_directories.push_back(argv[argi]);
       } else if(arg == "--strict-json") {
         opts.strict_json = true;
+      } else if(arg == "--no-js-exports") {
+        opts.skip_js_exports = true;
       } else if(arg == "--defaults-json") {
         opts.output_default_scalars_in_json = true;
       } else if(arg == "--no-prefix") {
@@ -195,13 +201,13 @@ int main(int argc, const char *argv[]) {
           ++file_it) {
       std::string contents;
       if (!flatbuffers::LoadFile(file_it->c_str(), true, &contents))
-        Error("unable to load file" + *file_it);
+        Error("unable to load file: " + *file_it);
 
       bool is_binary = static_cast<size_t>(file_it - filenames.begin()) >=
                        binary_files_from;
       if (is_binary) {
         parser.builder_.Clear();
-        parser.builder_.PushBytes(
+        parser.builder_.PushFlatBuffer(
           reinterpret_cast<const uint8_t *>(contents.c_str()),
           contents.length());
         if (!raw_binary) {

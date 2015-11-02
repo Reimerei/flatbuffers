@@ -125,6 +125,11 @@ struct Type {
       enum_def(_ed)
   {}
 
+  bool operator==(const Type &o) {
+    return base_type == o.base_type && element == o.element &&
+           struct_def == o.struct_def && enum_def == o.enum_def;
+  }
+
   Type VectorType() const { return Type(element, struct_def, enum_def); }
 
   Offset<reflection::Type> Serialize(FlatBufferBuilder *builder) const;
@@ -163,6 +168,17 @@ template<typename T> class SymbolTable {
     return false;
   }
 
+  void Move(const std::string &oldname, const std::string &newname) {
+    auto it = dict.find(oldname);
+    if (it != dict.end()) {
+      auto obj = it->second;
+      dict.erase(it);
+      dict[newname] = obj;
+    } else {
+      assert(false);
+    }
+  }
+
   T *Lookup(const std::string &name) const {
     auto it = dict.find(name);
     return it == dict.end() ? nullptr : it->second;
@@ -178,6 +194,13 @@ template<typename T> class SymbolTable {
 // A name space, as set in the schema.
 struct Namespace {
   std::vector<std::string> components;
+
+  // Given a (potentally unqualified) name, return the "fully qualified" name
+  // which has a full namespaced descriptor.
+  // With max_components you can request less than the number of components
+  // the current namespace has.
+  std::string GetFullyQualifiedName(const std::string &name,
+                                    size_t max_components = 1000) const;
 };
 
 // Base class for all definition types (fields, structs_, enums_).
@@ -198,8 +221,7 @@ struct Definition {
 };
 
 struct FieldDef : public Definition {
-  FieldDef() : deprecated(false), required(false), key(false), padding(0),
-               used(false) {}
+  FieldDef() : deprecated(false), required(false), key(false), padding(0) {}
 
   Offset<reflection::Field> Serialize(FlatBufferBuilder *builder, uint16_t id)
                                                                           const;
@@ -210,7 +232,6 @@ struct FieldDef : public Definition {
   bool required;   // Field must always be present.
   bool key;        // Field functions as a key for creating sorted vectors.
   size_t padding;  // Bytes to always pad after this field.
-  bool used;       // Used during JSON parsing to check for repeated fields.
 };
 
 struct StructDef : public Definition {
@@ -293,7 +314,8 @@ class Parser {
       cursor_(nullptr),
       line_(1),
       proto_mode_(proto_mode),
-      strict_json_(strict_json) {
+      strict_json_(strict_json),
+      anonymous_counter(0) {
     // Just in case none are declared:
     namespaces_.push_back(new Namespace());
     known_attributes_.insert("deprecated");
@@ -331,12 +353,6 @@ class Parser {
   // Mark all definitions as already having code generated.
   void MarkGenerated();
 
-  // Given a (potentally unqualified) name, return the "fully qualified" name
-  // which has a full namespaced descriptor. If the parser has no current
-  // namespace context, or if the name passed is partially qualified the input
-  // is simply returned.
-  std::string GetFullyQualifiedName(const std::string &name) const;
-
   // Get the files recursively included by the given file. The returned
   // container will have at least the given file.
   std::set<std::string> GetIncludedFilesRecursive(
@@ -351,6 +367,7 @@ class Parser {
   void Next();
   bool IsNext(int t);
   void Expect(int t);
+  std::string TokenToStringId(int t);
   EnumDef *LookupEnum(const std::string &id);
   void ParseNamespacing(std::string *id, std::string *last);
   void ParseTypeIdent(Type &type);
@@ -359,8 +376,8 @@ class Parser {
                      const std::string &name,
                      const Type &type);
   void ParseField(StructDef &struct_def);
-  void ParseAnyValue(Value &val, FieldDef *field);
-  uoffset_t ParseTable(const StructDef &struct_def);
+  void ParseAnyValue(Value &val, FieldDef *field, size_t parent_fieldn);
+  uoffset_t ParseTable(const StructDef &struct_def, std::string *value);
   void SerializeStruct(const StructDef &struct_def, const Value &val);
   void AddVector(bool sortbysize, int count);
   uoffset_t ParseVector(const Type &type);
@@ -369,12 +386,19 @@ class Parser {
   void ParseHash(Value &e, FieldDef* field);
   void ParseSingleValue(Value &e);
   int64_t ParseIntegerFromString(Type &type);
-  StructDef *LookupCreateStruct(const std::string &name);
-  void ParseEnum(bool is_union);
+  StructDef *LookupCreateStruct(const std::string &name,
+                                bool create_if_new = true,
+                                bool definition = false);
+  EnumDef &ParseEnum(bool is_union);
   void ParseNamespace();
-  StructDef &StartStruct();
+  StructDef &StartStruct(const std::string &name);
   void ParseDecl();
+  void ParseProtoFields(StructDef *struct_def, bool isextend,
+                        bool inside_oneof);
+  void ParseProtoOption();
+  void ParseProtoKey();
   void ParseProtoDecl();
+  void ParseProtoCurliesOrIdent();
   Type ParseTypeFromProtoType();
 
  public:
@@ -402,9 +426,10 @@ class Parser {
   std::vector<std::string> doc_comment_;
 
   std::vector<std::pair<Value, FieldDef *>> field_stack_;
-  std::vector<uint8_t> struct_stack_;
 
   std::set<std::string> known_attributes_;
+
+  int anonymous_counter;
 };
 
 // Utility functions for multiple generators:
@@ -421,6 +446,7 @@ extern void GenComment(const std::vector<std::string> &dc,
 // Container of options that may apply to any of the source/text generators.
 struct GeneratorOptions {
   bool strict_json;
+  bool skip_js_exports;
   bool output_default_scalars_in_json;
   int indent_step;
   bool output_enum_identifiers;
@@ -436,6 +462,7 @@ struct GeneratorOptions {
   Language lang;
 
   GeneratorOptions() : strict_json(false),
+                       skip_js_exports(false),
                        output_default_scalars_in_json(false),
                        indent_step(2),
                        output_enum_identifiers(true), prefixed_enums(true), scoped_enums(false),
@@ -477,6 +504,15 @@ extern bool GenerateCPP(const Parser &parser,
                         const std::string &path,
                         const std::string &file_name,
                         const GeneratorOptions &opts);
+
+// Generate JavaScript code from the definitions in the Parser object.
+// See idl_gen_js.
+extern std::string GenerateJS(const Parser &parser,
+                              const GeneratorOptions &opts);
+extern bool GenerateJS(const Parser &parser,
+                       const std::string &path,
+                       const std::string &file_name,
+                       const GeneratorOptions &opts);
 
 // Generate Go files from the definitions in the Parser object.
 // See idl_gen_go.cpp.
@@ -522,6 +558,13 @@ extern bool GenerateFBS(const Parser &parser,
                         const std::string &path,
                         const std::string &file_name,
                         const GeneratorOptions &opts);
+
+// Generate a make rule for the generated JavaScript code.
+// See idl_gen_js.cpp.
+extern std::string JSMakeRule(const Parser &parser,
+                              const std::string &path,
+                              const std::string &file_name,
+                              const GeneratorOptions &opts);
 
 // Generate a make rule for the generated C++ header.
 // See idl_gen_cpp.cpp.

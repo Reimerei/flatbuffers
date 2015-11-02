@@ -203,10 +203,6 @@ func CheckReadBuffer(buf []byte, offset flatbuffers.UOffsetT, fail func(string, 
 		fail(FailString("monster.TestType()", example.AnyMonster, got))
 	}
 
-	if unionType := monster.TestType(); unionType != example.AnyMonster {
-		fail("monster.TestType()")
-	}
-
 	// initialize a Table from a union field Test(...)
 	var table2 flatbuffers.Table
 	if ok := monster.Test(&table2); !ok {
@@ -372,7 +368,7 @@ func checkFuzz(fuzzFields, fuzzObjects int, fail func(string, ...interface{})) {
 
 		for j := 0; j < fuzzFields; j++ {
 			f := flatbuffers.VOffsetT((flatbuffers.VtableMetadataFields + j) * flatbuffers.SizeVOffsetT)
-			choice := int(l.Next()) % testValuesMax
+			choice := l.Next() % uint32(testValuesMax)
 
 			switch choice {
 			case 0:

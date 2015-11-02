@@ -428,7 +428,8 @@ void ParseProtoTest() {
 
   // Parse proto.
   flatbuffers::Parser parser(false, true);
-  TEST_EQ(parser.Parse(protofile.c_str(), nullptr), true);
+  const char *include_directories[] = { "tests/prototest", nullptr };
+  TEST_EQ(parser.Parse(protofile.c_str(), include_directories), true);
 
   // Generate fbs.
   flatbuffers::GeneratorOptions opts;
@@ -507,7 +508,7 @@ void FuzzTest1() {
 
   lcg_reset();  // Reset.
 
-  uint8_t *eob = builder.GetBufferPointer() + builder.GetSize();
+  uint8_t *eob = builder.GetCurrentBufferPointer() + builder.GetSize();
 
   // Test that all objects we generated are readable and return the
   // expected values. We generate random objects in the same order
@@ -737,7 +738,7 @@ void ErrorTest() {
   TestError("table X { Y:int; } root_type X; { \"Y\":1, }", "string constant",
             true);
   TestError("struct X { Y:int; Z:int; } table W { V:X; } root_type W; "
-            "{ V:{ Y:1 } }", "incomplete");
+            "{ V:{ Y:1 } }", "wrong number");
   TestError("enum E:byte { A } table X { Y:E; } root_type X; { Y:U }",
             "unknown enum value");
   TestError("table X { Y:byte; } root_type X; { Y:; }", "starting");

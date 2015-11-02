@@ -68,7 +68,8 @@ template<> inline std::string NumToString<double>(double t) {
   auto p = s.find_last_not_of('0');
   if (p != std::string::npos) {
     s.resize(p + 1);  // Strip trailing zeroes.
-    if (s.back() == '.') s.pop_back();  // Strip '.' if a whole number.
+    if (s.back() == '.')
+      s.erase(s.size() - 1, 1);  // Strip '.' if a whole number.
   }
   return s;
 }
@@ -89,8 +90,17 @@ inline std::string IntToStringHex(int i, int xdigits) {
   return ss.str();
 }
 
-// Portable implementation of strtoull().
+// Portable implementation of strtoll().
 inline int64_t StringToInt(const char *str, int base = 10) {
+  #ifdef _MSC_VER
+    return _strtoi64(str, nullptr, base);
+  #else
+    return strtoll(str, nullptr, base);
+  #endif
+}
+
+// Portable implementation of strtoull().
+inline int64_t StringToUInt(const char *str, int base = 10) {
   #ifdef _MSC_VER
     return _strtoui64(str, nullptr, base);
   #else
@@ -111,10 +121,18 @@ inline bool FileExists(const char *name) {
 inline bool LoadFile(const char *name, bool binary, std::string *buf) {
   std::ifstream ifs(name, binary ? std::ifstream::binary : std::ifstream::in);
   if (!ifs.is_open()) return false;
-  ifs.seekg(0, std::ios::end);
-  (*buf).resize(static_cast<size_t>(ifs.tellg()));
-  ifs.seekg(0, std::ios::beg);
-  ifs.read(&(*buf)[0], (*buf).size());
+  if (binary) {
+    // The fastest way to read a file into a string.
+    ifs.seekg(0, std::ios::end);
+    (*buf).resize(static_cast<size_t>(ifs.tellg()));
+    ifs.seekg(0, std::ios::beg);
+    ifs.read(&(*buf)[0], (*buf).size());
+  } else {
+    // This is slower, but works correctly on all platforms for text files.
+    std::ostringstream oss;
+    oss << ifs.rdbuf();
+    *buf = oss.str();
+  }
   return !ifs.bad();
 }
 
